@@ -463,7 +463,7 @@ static void water_purifier_app (void)
     random = rand()%40;
     PRINTF("\r\nRandom number %d\r\n", random);
     
-    if(random == 6)
+    if(random == 23)
     {
         problem_occurred = THERES_A_PROBLEM;
         PRINTF("Problem has occurred. Service cannot be offered until the problem gets fixed\r\n");
@@ -578,10 +578,10 @@ static void app_thread(void *arg)
     err = tcpip_callback(publish_problem_occurred, NULL);
     money_counter = 0;
     err = tcpip_callback(publish_money_counter, NULL);
-    level = 80;
+    level = 1200;
     err = tcpip_callback(publish_water_level, NULL);
-    // publish_empty = TANK_IS_NOT_EMPTY;
-    // err = tcpip_callback(publish_empty_f, NULL);
+    publish_empty = TANK_IS_NOT_EMPTY;
+    err = tcpip_callback(publish_empty_f, NULL);
     /* Publish some messages */
     for (;;)
     {

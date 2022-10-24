@@ -85,7 +85,7 @@ struct mqtt_client_s
   mqtt_connection_cb_t connect_cb;
   /** Pending requests to server */
   struct mqtt_request_t *pend_req_queue;
-  struct mqtt_request_t req_list[MQTT_REQ_MAX_IN_FLIGHT];
+  struct mqtt_request_t req_list[6];
   void *inpub_arg;
   /** Incoming data callback */
   mqtt_incoming_data_cb_t data_cb;
