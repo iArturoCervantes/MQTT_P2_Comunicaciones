@@ -103,14 +103,18 @@
 #define THERES_A_PROBLEM 1
 #define FIX_MODE_ACTIVATED 1
 #define FIX_MODE_DEACTIVATED 0
-#define EMPTY_CASH_REGISTER_ACTIVATED 1
-#define EMPTY_CASH_REGISTER_DECTIVATED 0
+#define TANK_IS_EMPTY 0
+#define TANK_IS_NOT_EMPTY 1
 
 /*******************************************************************************
  * Prototypes
  ******************************************************************************/
 
-static void connect_to_mqtt(void *ctx);
+static void connect_to_mqtt         (void *ctx);
+static void publish_money_counter   (void *ctx);
+static void publish_problem_occurred (void *ctx);
+static void publish_water_level     (void *ctx);
+static void publish_empty_f(void *ctx);
 
 /*******************************************************************************
  * Variables
@@ -145,11 +149,11 @@ static ip_addr_t mqtt_addr;
 
 /*! @brief Indicates connection to MQTT broker. */
 static volatile bool connected = false;
-static int level = 1200;
+static int level = 300;
 static int money_counter = 0;
-static char problem_ocurred = 0;
+static char problem_occurred = 0;
 static char fix_mode = 0;
-static char empty_cash_register = 0;
+static int publish_empty = 0;
 volatile bool g_ButtonPress = false;
 int adquired_data = 0;
 err_t err;
@@ -228,28 +232,41 @@ static void mqtt_incoming_publish_cb(void *arg, const char *topic, u32_t tot_len
 
     if(strcmp(top,topic)== 0)
     {
-        if (problem_ocurred == THERES_A_PROBLEM)
+        fix_mode = 0x01 & (~adquired_data);
+        PRINTF("%s : %d\r\n", top,fix_mode);
+        if (problem_occurred == THERES_A_PROBLEM)
         {
-    	    PRINTF("Fix mode, all features deactivated, UV filter deactivated \n\r");
-            fix_mode = FIX_MODE_ACTIVATED;
+            if (fix_mode == FIX_MODE_ACTIVATED)
+            {
+                PRINTF("Fix mode. All features have been deactivated until issue is been fixed. \n\r");
+                PRINTF("Once all problems are fixed, operate the water purifier in its normal operation\n\r");
+                fix_mode = FIX_MODE_ACTIVATED;
+            }
+            else
+            {
+                if(publish_empty == TANK_IS_EMPTY)
+                {
+                    level =1200;
+                    PRINTF("You should report %d pesos to the manager. New count is %d pesos. \n\r",money_counter,0);
+                    PRINTF("The tank has been refilled. New tank level is %d \n\r",level);
+                    money_counter = 0;
+                    publish_empty = TANK_IS_NOT_EMPTY;
+                    err = tcpip_callback(publish_empty_f, NULL);
+                }
+                GPIO_PortSet(BOARD_LED_GPIO, 1U << BOARD_LED_GPIO_PIN);
+                PRINTF("Fix mode deactivated. Continue in normal operation.\n\r");
+                problem_occurred = NO_PROBLEM_HAS_OCURRED;
+                fix_mode = FIX_MODE_DEACTIVATED;
+                err = tcpip_callback(publish_problem_occurred, NULL);
+            }
         }
         else
         {
-            PRINTF("Not valid command, no problem found \n\r");
+            /*This state should not be reached*/
+            fix_mode = FIX_MODE_DEACTIVATED;
+            PRINTF("Not valid command, no problem found.  \n\r");
         }
     }
-    else
-   {
-    	sprintf(top, "water_purifier/%s/empty_cash_register",client_id);
-    	if(strcmp(top,topic)==0)
-    	{
-    		PRINTF("Match empty_cash_register!\n\r");
-    	}
-    	else
-    	{
-    		PRINTF("No Match!\n\r");
-    	}
-   }
 }
 
 /*!
@@ -265,8 +282,8 @@ static void mqtt_incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t f
     {
         if (isprint(data[i]))
         {
-        	adquired_data = atoi (data);
             PRINTF("%c", (char)data[i]);
+            adquired_data = atoi(data);
         }
         else
         {
@@ -287,16 +304,11 @@ static void mqtt_subscribe_topics(mqtt_client_t *client)
 {
     char topic[40] = {0};
     err_t err;
-
+    
     mqtt_set_inpub_callback(client, mqtt_incoming_publish_cb, mqtt_incoming_data_cb, LWIP_CONST_CAST(void *, &mqtt_client_info));
 
     sprintf(topic, "water_purifier/%s/fix_mode", client_id);
     err = mqtt_subscribe(client, topic, 1, mqtt_topic_subscribed_cb, LWIP_CONST_CAST(void *, "fix_mode"));
-    if (err == ERR_OK) PRINTF("Subscribing to the topic \"%s\" with QoS %d...\r\n", topic, 1);
-    else PRINTF("Failed to subscribe to the topic \"%s\" with QoS %d: %d.\r\n", topic, 1, err);
-
-    sprintf(topic, "water_purifier/%s/empty_cash_register", client_id);
-    err = mqtt_subscribe(client, topic, 1, mqtt_topic_subscribed_cb, LWIP_CONST_CAST(void *, "empty_cash_register"));
     if (err == ERR_OK) PRINTF("Subscribing to the topic \"%s\" with QoS %d...\r\n", topic, 1);
     else PRINTF("Failed to subscribe to the topic \"%s\" with QoS %d: %d.\r\n", topic, 1, err);
 }
@@ -369,7 +381,7 @@ static void mqtt_message_published_cb(void *arg, err_t err)
 
     if (err == ERR_OK)
     {
-        PRINTF("Published to the topic \"%s\".\r\n", topic);
+        //PRINTF("Published to the topic \"%s\".\r\n", topic);
     }
     else
     {
@@ -389,7 +401,7 @@ static void publish_water_level(void *ctx)
 
     sprintf(topic, "water_purifier/%s/level", client_id);
     sprintf(message, "%d", level);
-    PRINTF("Going to publish to the topic: \"%s\", message:  \"%s\"...\r\n", topic, message);
+    PRINTF("\"%s\", message:  \"%s\"...\r\n", topic, message);
 
     mqtt_publish(mqtt_client, topic, message, strlen(message), 1, 0, mqtt_message_published_cb, (void *)"level");
 }
@@ -406,58 +418,90 @@ static void publish_money_counter(void *ctx)
 
     sprintf(topic, "water_purifier/%s/money_counter", client_id);
     sprintf(message, "%d", money_counter);
-    PRINTF("Going to publish to the topic: \"%s\", message:  \"%s\"...\r\n", topic, message);
+    PRINTF("\"%s\", message:  \"%s\"...\r\n", topic, message);
 
     mqtt_publish(mqtt_client, topic, message, strlen(message), 1, 0, mqtt_message_published_cb, (void *)"money_counter");
 }
 /*!
  * @brief Publishes a message. To be called on tcpip_thread.
  */
-static void publish_problem_ocurred(void *ctx)
+static void publish_problem_occurred(void *ctx)
 {
     char topic[40] = {0};
     char message[40] = {0};
 
     LWIP_UNUSED_ARG(ctx);
 
-    sprintf(topic, "water_purifier/%s/problem_ocurred", client_id);
-    sprintf(message, "%d", problem_ocurred);
-    PRINTF("Going to publish to the topic: \"%s\", message:  \"%s\"...\r\n", topic, message);
+    sprintf(topic, "water_purifier/%s/problem_occurred", client_id);
+    sprintf(message, "%d", problem_occurred);
+    PRINTF("\"%s\", message:  \"%s\"...\r\n", topic, message);
 
-    mqtt_publish(mqtt_client, topic, message, strlen(message), 1, 0, mqtt_message_published_cb, (void *)"problem_ocurred");
+    mqtt_publish(mqtt_client, topic, message, strlen(message), 1, 0, mqtt_message_published_cb, (void *)"problem_occurred");
+}
+/*!
+ * @brief Publishes a message. To be called on tcpip_thread.
+ */
+static void publish_empty_f(void *ctx)
+{
+    char topic[40] = {0};
+    char message[40] = {0};
+
+    LWIP_UNUSED_ARG(ctx);
+
+    sprintf(topic, "water_purifier/%s/empty", client_id);
+    sprintf(message, "%d", publish_empty);
+    PRINTF("\"%s\", message:  \"%s\"...\r\n", topic, message);
+    PRINTF("Service cannot be offered until the tank is refilled. All systems will be deactivated. Once the tank gets filled continue as normal operation\r\n");
+
+    mqtt_publish(mqtt_client, topic, message, strlen(message), 1, 0, mqtt_message_published_cb, (void *)"empty");
 }
 
 static void water_purifier_app (void)
 {
     char random = 0;
 
-    random = rand()%10;
-    PRINTF("Random number %d\r\n", random);
+    random = rand()%40;
+    PRINTF("\r\nRandom number %d\r\n", random);
     
-    if(random == 2)
+    if(random == 6)
     {
-        problem_ocurred = THERES_A_PROBLEM;
+        problem_occurred = THERES_A_PROBLEM;
+        PRINTF("Problem has occurred. Service cannot be offered until the problem gets fixed\r\n");
     }
 
-    if(problem_ocurred == THERES_A_PROBLEM)
+    if(problem_occurred == THERES_A_PROBLEM)
     {
-        GPIO_PortClear(BOARD_LED_GPIO, 1U << BOARD_LED_GPIO_PIN);
-        err = tcpip_callback(publish_problem_ocurred, NULL);
-        PRINTF("There's a problem with the waterp purifier, send a technician");
-    }
-    else
-    {
+
         if (fix_mode == FIX_MODE_ACTIVATED)
         {
-            fix_mode = FIX_MODE_DEACTIVATED;
-            problem_ocurred = NO_PROBLEM_HAS_OCURRED;
+            PRINTF("Please deactivate the fix mode once you are sure to have the system fixed\r\n");
+            
         }
+        else
+        {
+            GPIO_PortClear(BOARD_LED_GPIO, 1U << BOARD_LED_GPIO_PIN);
+            PRINTF("There's a problem with the waterp purifier, send a technician\r\n");
+        }
+        err = tcpip_callback(publish_problem_occurred, NULL);
+    }
+    else
+    {   
+        if(level > TANK_IS_EMPTY)
+        {
             GPIO_PortSet(BOARD_LED_GPIO, 1U << BOARD_LED_GPIO_PIN);
-        
-        level=level-20;
-        money_counter=money_counter+10;
-        err = tcpip_callback(publish_water_level, NULL);
-        err = tcpip_callback(publish_money_counter, NULL);
+            level=level-20;
+            money_counter=money_counter+10;
+            err = tcpip_callback(publish_water_level, NULL);
+            err = tcpip_callback(publish_money_counter, NULL);
+        }
+        if (level <= TANK_IS_EMPTY)
+        {
+            GPIO_PortClear(BOARD_LED_GPIO, 1U << BOARD_LED_GPIO_PIN);
+            publish_empty = TANK_IS_EMPTY;
+            problem_occurred = THERES_A_PROBLEM;
+            err = tcpip_callback(publish_problem_occurred, NULL);
+            err = tcpip_callback(publish_empty_f, NULL);
+        }
     }
 }
 void init_seed_timer (void)
@@ -530,6 +574,14 @@ static void app_thread(void *arg)
 
     init_button_and_led();
     init_seed_timer();
+    problem_occurred = NO_PROBLEM_HAS_OCURRED;
+    err = tcpip_callback(publish_problem_occurred, NULL);
+    money_counter = 0;
+    err = tcpip_callback(publish_money_counter, NULL);
+    level = 80;
+    err = tcpip_callback(publish_water_level, NULL);
+    // publish_empty = TANK_IS_NOT_EMPTY;
+    // err = tcpip_callback(publish_empty_f, NULL);
     /* Publish some messages */
     for (;;)
     {
@@ -538,7 +590,7 @@ static void app_thread(void *arg)
 
             if (g_ButtonPress)
             {
-                PRINTF(" %s is pressed \r\n", BOARD_SW_NAME);
+                // PRINTF(" %s is pressed \r\n", BOARD_SW_NAME);
                 /* Reset state of button. */
                 g_ButtonPress = false;
                 water_purifier_app();

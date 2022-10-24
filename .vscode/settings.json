@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "*.test": "c",
+        "*.testpart": "c",
+        "type_traits": "c"
+    }
+}
